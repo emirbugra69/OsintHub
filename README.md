@@ -1,2 +1,1 @@
-# detayl-osint-arac-
-readme okuyunuz..
+UYARI BU ARAÇ SADECE EĞİTİM İÇİN KULLANILMALIDIR GELİŞTİRİCİ OLUMSUZ DURUMLARDAN SORUMLU DEĞİLDİR 
