@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>🕵️ OsintHub - Profesyonel OSINT | Forensics | Enterprise Security</title>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', monospace; background: #0a0e27; color: #00ff88; padding: 20px; }
+        .container { max-width: 1800px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 30px; font-size: 1.6em; letter-spacing: 2px; text-shadow: 0 0 5px #00ff88; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; }
+        .card { background: rgba(30,30,50,0.95); border-radius: 15px; padding: 20px; border: 1px solid #00ff88; transition: 0.2s; }
+        .card:hover { box-shadow: 0 0 10px rgba(0,255,136,0.3); }
+        .card h2 { color: #00ff88; margin-bottom: 15px; font-size: 1.1em; border-left: 4px solid #00ff88; padding-left: 10px; }
+        input, textarea, select { width: 100%; padding: 10px; margin: 8px 0; background: #0a0e27; border: 1px solid #00ff88; color: white; border-radius: 8px; font-family: monospace; }
+        button { width: 100%; padding: 10px; background: linear-gradient(135deg, #00ff88, #00aaff); color: #0a0e27; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 8px; font-family: monospace; transition: 0.2s; }
+        button:hover { opacity: 0.85; transform: scale(0.99); }
+        .results { margin-top: 15px; background: #0a0e27; padding: 12px; border-radius: 8px; max-height: 350px; overflow-y: auto; font-size: 0.85em; }
+        .result-item { padding: 8px; margin: 5px 0; background: #1a1a2e; border-radius: 5px; border-left: 3px solid #00ff88; word-break: break-all; white-space: pre-line; line-height: 1.5; }
+        .found { border-left-color: #00ff88; color: #00ff88; }
+        .not-found { border-left-color: #ff4444; color: #ff8888; }
+        .warning { border-left-color: #ffaa00; color: #ffaa00; }
+        .loading { text-align: center; padding: 15px; color: #ffaa00; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .footer { text-align: center; margin-top: 30px; padding: 15px; color: #555; font-size: 0.8em; border-top: 1px solid #1a1a2e; }
+        .history-item { padding: 6px 8px; margin: 3px; background: #1a1a2e; border-radius: 5px; border-left: 3px solid #00aaff; color: #aaa; font-size: 0.82em; }
+        a { color: #00aaff; text-decoration: none; display: block; margin-top: 2px; font-size: 0.85em; }
+        a:hover { text-decoration: underline; }
+        #graphContainer { width: 100%; height: 400px; background: #0a0a1a; border-radius: 8px; margin-top: 10px; border: 1px solid #00ff88; }
+        .risk-high { color: #ff4444; }
+        .risk-medium { color: #ffaa00; }
+        .risk-low { color: #00ff88; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🕵️ OsintHub — OSINT + Forensics + Enterprise Security</h1>
+
+        <div class="grid">
+            <!-- 1. USERNAME -->
+            <div class="card"><h2>🔍 Kullanıcı Adı Sorgula (15 platform)</h2>
+                <input type="text" id="username" placeholder="Kullanıcı adı... (örn: elonmusk)">
+                <button onclick="searchUsername()">ARA</button>
+                <div id="usernameResults" class="results"></div>
+            </div>
+
+            <!-- 2. EMAIL -->
+            <div class="card"><h2>📧 Email Breach Kontrol</h2>
+                <input type="email" id="email" placeholder="ornek@mail.com">
+                <button onclick="searchEmail()">ARA</button>
+                <div id="emailResults" class="results"></div>
+            </div>
+
+            <!-- 3. TELEFON -->
+            <div class="card"><h2>📞 Telefon Sorgula</h2>
+                <input type="tel" id="phone" placeholder="5551234567 veya +905551234567">
+                <button onclick="searchPhone()">ARA</button>
+                <div id="phoneResults" class="results"></div>
+            </div>
+
+            <!-- 4. DOMAIN -->
+            <div class="card"><h2>🌐 Domain Detaylı Sorgula</h2>
+                <input type="text" id="domain" placeholder="example.com">
+                <button onclick="searchDomain()">ARA</button>
+                <div id="domainResults" class="results"></div>
+            </div>
+
+            <!-- 5. IP -->
+            <div class="card"><h2>📍 IP Adresi ve Lokasyon</h2>
+                <button onclick="getMyIP()">🔍 Kendi IP'mi Bul</button>
+                <input type="text" id="ipLookup" placeholder="IP adresi girin">
+                <button onclick="lookupIP()">🌍 IP Lokasyonu Sorgula</button>
+                <div id="ipResults" class="results"></div>
+            </div>
+
+            <!-- 6. WAYBACK -->
+            <div class="card"><h2>📜 Wayback Machine (Site Arşivi)</h2>
+                <input type="text" id="wayback" placeholder="example.com">
+                <button onclick="searchWayback()">ARA</button>
+                <div id="waybackResults" class="results"></div>
+            </div>
+
+            <!-- 7. CRT SUBDOMAIN -->
+            <div class="card"><h2>🗂️ Subdomain Bulucu (crt.sh)</h2>
+                <input type="text" id="subdomain" placeholder="example.com">
+                <button onclick="searchCRTSubdomains()">ARA</button>
+                <div id="subdomainResults" class="results"></div>
+            </div>
+
+            <!-- 8. SAHTE KULLANICI -->
+            <div class="card"><h2>🎭 Sahte Kullanıcı Verisi Üret</h2>
+                <button onclick="generateFakeUser()">🔄 Rastgele Kullanıcı Üret</button>
+                <div id="fakeUserResults" class="results"></div>
+            </div>
+
+            <!-- 9. DETAYLI IP -->
+            <div class="card"><h2>📍 Detaylı IP Lokasyonu (ipinfo.io)</h2>
+                <input type="text" id="detailedIp" placeholder="IP adresi...">
+                <button onclick="searchDetailedIP()">🌍 Detaylı Sorgula</button>
+                <div id="detailedIpResults" class="results"></div>
+            </div>
+
+            <!-- 10. DNS -->
+            <div class="card"><h2>📜 DNS Kayıtları</h2>
+                <input type="text" id="dnsHistoryDomain" placeholder="example.com">
+                <button onclick="getDNSHistory()">🔍 DNS Kayıtlarını Getir</button>
+                <div id="dnsHistoryResults" class="results"></div>
+            </div>
+
+            <!-- 11. PORT TARAMA -->
+            <div class="card"><h2>🔌 Port Tarama (15 port)</h2>
+                <input type="text" id="scanIp" placeholder="IP adresi...">
+                <button onclick="scanPorts()">🔎 Açık Portları Tara</button>
+                <div id="portResults" class="results"></div>
+            </div>
+
+            <!-- 12. DOMAIN'DEN IP -->
+            <div class="card"><h2>🔄 Domain'den IP Bul</h2>
+                <input type="text" id="domainToIp" placeholder="example.com">
+                <button onclick="getIPFromDomain()">🌐 IP'yi Bul</button>
+                <div id="domainToIpResults" class="results"></div>
+            </div>
+
+            <!-- 13. RAPOR -->
+            <div class="card"><h2>💾 Rapor Kaydet (JSON)</h2>
+                <input type="text" id="reportName" placeholder="rapor_adi">
+                <textarea id="reportData" rows="3" placeholder="Sonuçları JSON olarak yapıştır..."></textarea>
+                <button onclick="saveReport()">📁 Masaüstüne Kaydet</button>
+                <div id="reportResults" class="results"></div>
+            </div>
+
+            <!-- 14. CORRELATION ENGINE -->
+            <div class="card"><h2>🔗 Correlation Engine</h2>
+                <button onclick="generateCorrelationReport()">📊 Bağlam Raporu Oluştur</button>
+                <div id="correlationResults" class="results"></div>
+            </div>
+
+            <!-- 15. GEÇMİŞ -->
+            <div class="card"><h2>📋 Geçmiş Aramalar</h2>
+                <button onclick="loadHistory()">📜 Geçmişi Yükle</button>
+                <button onclick="clearHistory()" style="background: linear-gradient(135deg,#ff4444,#aa0000); color:white;">🗑️ Temizle</button>
+                <div id="historyResults" class="results"></div>
+            </div>
+
+            <!-- 16. GRAPH VIEW -->
+            <div class="card"><h2>🕸️ Graph View (Bağlantı Haritası)</h2>
+                <button onclick="loadGraph()">📊 Korelasyon Grafiğini Yükle</button>
+                <div id="graphContainer"></div>
+                <div id="graphInfo" class="results"></div>
+            </div>
+
+            <!-- 17. RISK DASHBOARD -->
+            <div class="card"><h2>⚠️ Risk Dashboard</h2>
+                <button onclick="loadRiskDashboard()">🔄 Risk Skorunu Güncelle</button>
+                <div id="dashboardResults" class="results"></div>
+            </div>
+
+            <!-- 18. PROXY -->
+            <div class="card"><h2>🌐 Proxy Ayarları (Tor / SOCKS5)</h2>
+                <select id="proxyType"><option value="none">Proxy Kullanma</option><option value="socks5">SOCKS5 (Tor: 127.0.0.1:9050)</option><option value="http">HTTP Proxy</option></select>
+                <input type="text" id="proxyUrl" placeholder="127.0.0.1:9050">
+                <button onclick="setProxy()">🔌 Proxy Aktif Et</button>
+                <button onclick="clearProxy()" style="background:#ff4444; color:white;">🚫 Proxy Kapat</button>
+                <div id="proxyResults" class="results"></div>
+            </div>
+
+            <!-- 19. BATCH (Toplu Sorgu) -->
+            <div class="card"><h2>📁 Batch Sorgu (Toplu)</h2>
+                <select id="batchType"><option value="username">Kullanıcı Adı</option><option value="domain">Domain</option></select>
+                <textarea id="batchData" rows="4" placeholder="Her satıra bir değer..."></textarea>
+                <button onclick="runBatchQuery()">🚀 Toplu Sorguyu Başlat</button>
+                <div style="margin-top: 10px;">
+                    <label for="batchConcurrency" style="color: #888;">Eşzamanlılık (Concurrency): </label>
+                    <input type="number" id="batchConcurrency" value="3" min="1" max="10" style="width: 70px; display: inline-block; margin:0;">
+                    <button onclick="setBatchConcurrency()" style="margin:0; padding: 5px;">Ayarla</button>
+                </div>
+                <div id="batchResults" class="results"></div>
+            </div>
+
+            <!-- 20. FORENSIC REPORT -->
+            <div class="card"><h2>🔒 Adli Bilişim Raporu (Forensic)</h2>
+                <input type="text" id="caseName" placeholder="Dosya No / Case ID">
+                <textarea id="forensicData" rows="3" placeholder='{"bulgu": "örnek"}'></textarea>
+                <button onclick="saveForensic()">📁 Adli Rapor Kaydet (SHA-256)</button>
+                <div id="forensicResults" class="results"></div>
+            </div>
+
+            <!-- 21. TYPOSQUATTING -->
+            <div class="card"><h2>⚠️ TypoSquatting / Domain Takibi</h2>
+                <input type="text" id="typoDomain" placeholder="ornek.com">
+                <button onclick="checkTyposquatting()">🔍 Sahte Domain Ara</button>
+                <div id="typoResults" class="results"></div>
+            </div>
+
+            <!-- 22. EMPLOYEE LEAK -->
+            <div class="card"><h2>🏢 Personel Sızıntı Takibi</h2>
+                <input type="text" id="companyDomain" placeholder="sirketadi.com">
+                <button onclick="checkEmployeeLeaks()">📧 Şirket E-postalarını Kontrol Et</button>
+                <div id="leakResults" class="results"></div>
+            </div>
+
+            <!-- 23. VIP PROTECTION -->
+            <div class="card"><h2>👑 VIP Koruma / Executive Protection</h2>
+                <input type="text" id="vipName" placeholder="Ad Soyad">
+                <input type="email" id="vipEmail" placeholder="E-posta">
+                <button onclick="vipProtectionScan()">🛡️ VIP Risk Analizi</button>
+                <div id="vipResults" class="results"></div>
+            </div>
+
+            <!-- 24. EULA -->
+            <div class="card"><h2>⚖️ Yasal Uyarı / EULA</h2>
+                <button onclick="showEULA()">📜 Kullanıcı Sözleşmesini Göster</button>
+                <div id="eulaResults" class="results"></div>
+            </div>
+
+            <!-- 25. GÖRSEL ANALİZ (METADATA) -->
+            <div class="card"><h2>🖼️ Görsel Metadata Analizi (EXIF)</h2>
+                <input type="file" id="imageInput" accept="image/jpeg, image/png, image/tiff" style="background: none; border: none; color: #ccc;">
+                <button onclick="analyzeUploadedImage()">🔍 Analiz Et</button>
+                <div id="metadataResults" class="results"></div>
+            </div>
+
+            <!-- 26. HTML RAPOR -->
+            <div class="card"><h2>📄 HTML Rapor Oluştur</h2>
+                <textarea id="htmlReportData" rows="3" placeholder='Rapor verisini JSON olarak yapıştır...'></textarea>
+                <button onclick="saveHtmlReport()">📁 HTML Raporu Kaydet</button>
+                <div id="htmlReportResults" class="results"></div>
+            </div>
+        </div>
+        <div class="footer">⚡ XSS Korumalı | Rate Limit | Graph View | Proxy (Tüm İsteklerde Aktif) | Batch | Forensics | VIP Protection | EULA v2.0 | EXIF Analizi | HTML Rapor</div>
+    </div>
+
+    <script>
+        // ============ XSS KORUMALI ELEMENT OLUŞTURUCU ============
+        function createSafeElement(tag, className, text, link = null) {
+            const el = document.createElement(tag);
+            if (className) el.className = className;
+            if (text) el.textContent = text;
+            if (link) {
+                const a = document.createElement('a');
+                a.href = link;
+                a.textContent = link;
+                a.target = '_blank';
+                a.style.color = '#00aaff';
+                el.appendChild(a);
+            }
+            return el;
+        }
+
+        function autoScroll(divId) { const el = document.getElementById(divId); if (el) el.scrollTop = el.scrollHeight; }
+        function setLoading(divId, msg = '🔄 İşleniyor...') { document.getElementById(divId).innerHTML = `<div class="loading">${msg}</div>`; }
+        function showError(divId, msg) { const div = document.getElementById(divId); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'warning', `❌ ${msg}`)); }
+
+        // ============ ANA FONKSİYONLAR ============
+        async function searchUsername() {
+            const username = document.getElementById('username').value.trim();
+            if (!username) return alert('Kullanıcı adı girin!');
+            setLoading('usernameResults');
+            try {
+                const data = await window.api.checkUsername(username);
+                const div = document.getElementById('usernameResults'); div.innerHTML = '';
+                if (data.error) { div.appendChild(createSafeElement('div', 'warning', `⚠️ ${data.error}`)); return; }
+                div.appendChild(createSafeElement('div', 'found', `📊 ${data.foundCount}/${data.results.length} platformda bulundu`));
+                for (const r of data.results) {
+                    const item = createSafeElement('div', r.exists ? 'found' : 'not-found', `${r.exists ? '✅' : '❌'} ${r.platform}`);
+                    if (r.exists && r.url) item.appendChild(createSafeElement('a', '', r.url, r.url));
+                    div.appendChild(item);
+                }
+                autoScroll('usernameResults');
+            } catch(e) { showError('usernameResults', e.message); }
+        }
+
+        async function searchEmail() {
+            const email = document.getElementById('email').value.trim();
+            if (!email) return alert('Email girin');
+            setLoading('emailResults');
+            try {
+                const result = await window.api.checkEmail(email);
+                const div = document.getElementById('emailResults'); div.innerHTML = '';
+                if (result.error) { div.appendChild(createSafeElement('div', 'warning', `⚠️ ${result.error}`)); return; }
+                div.appendChild(createSafeElement('div', result.breached ? 'not-found' : 'found', result.breached ? `⚠️ İHLAL BULUNDU!\nKaynaklar: ${result.sources.join(', ')}` : `✅ ${result.message}`));
+                autoScroll('emailResults');
+            } catch(e) { showError('emailResults', e.message); }
+        }
+
+        async function searchPhone() {
+            const phone = document.getElementById('phone').value.trim();
+            if (!phone) return alert('Telefon girin');
+            setLoading('phoneResults');
+            try {
+                const result = await window.api.checkPhone(phone);
+                const div = document.getElementById('phoneResults'); div.innerHTML = '';
+                div.appendChild(createSafeElement('div', result.valid ? 'found' : 'not-found', result.valid ? `✅ Geçerli: ${result.international}\n📞 Ulusal: ${result.national}\n🌍 ${result.countryCode}` : `❌ ${result.error}`));
+                autoScroll('phoneResults');
+            } catch(e) { showError('phoneResults', e.message); }
+        }
+
+        async function searchDomain() {
+            const domain = document.getElementById('domain').value.trim();
+            if (!domain) return alert('Domain girin');
+            setLoading('domainResults');
+            try {
+                const data = await window.api.checkDomain(domain);
+                const div = document.getElementById('domainResults'); div.innerHTML = '';
+                if (data.error) { div.appendChild(createSafeElement('div', 'warning', `⚠️ ${data.error}`)); return; }
+                div.appendChild(createSafeElement('div', 'found', `🌐 ${data.domain}\n🖥️ IP: ${data.results.ip}\n📧 MX: ${data.results.mx.map(m => m.exchange).join(', ') || 'Yok'}\n🔧 NS: ${data.results.ns.join(', ') || 'Yok'}`));
+                autoScroll('domainResults');
+            } catch(e) { showError('domainResults', e.message); }
+        }
+
+        async function getMyIP() { setLoading('ipResults'); try { const result = await window.api.getMyIP(); const div = document.getElementById('ipResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', result.success ? 'found' : 'not-found', result.success ? `🌐 Kendi IP: ${result.ip}` : '❌ IP alınamadı')); autoScroll('ipResults'); } catch(e) { showError('ipResults', e.message); } }
+        async function lookupIP() { const ip = document.getElementById('ipLookup').value.trim(); if (!ip) return alert('IP girin'); setLoading('ipResults'); try { const result = await window.api.getIPLocation(ip); const div = document.getElementById('ipResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `📍 IP: ${result.ip}\n🌍 ${result.country}\n🏙️ ${result.city}\n🗺️ ${result.region}\n📡 ${result.isp}\n⏰ ${result.timezone}`)); else div.appendChild(createSafeElement('div', 'not-found', '❌ Lokasyon alınamadı')); autoScroll('ipResults'); } catch(e) { showError('ipResults', e.message); } }
+        async function searchDetailedIP() { const ip = document.getElementById('detailedIp').value.trim(); if (!ip) return alert('IP girin'); setLoading('detailedIpResults'); try { const result = await window.api.getDetailedIP(ip); const div = document.getElementById('detailedIpResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `📍 IP: ${result.ip}\n🌍 ${result.country}\n🏙️ ${result.city}\n🗺️ ${result.region}\n🏢 ${result.org || result.isp}\n📮 Posta: ${result.postal}\n⏰ ${result.timezone}\n🗺️ ${result.lat},${result.lon}`)); else div.appendChild(createSafeElement('div', 'not-found', '❌ Detay alınamadı')); autoScroll('detailedIpResults'); } catch(e) { showError('detailedIpResults', e.message); } }
+
+        async function searchWayback() { const domain = document.getElementById('wayback').value.trim(); if (!domain) return alert('Domain girin'); setLoading('waybackResults'); try { const result = await window.api.checkWayback(domain); const div = document.getElementById('waybackResults'); div.innerHTML = ''; if (result.archived) { const item = createSafeElement('div', 'found', `📜 Arşiv bulundu!`); item.appendChild(createSafeElement('a', '', result.url, result.url)); div.appendChild(item); } else div.appendChild(createSafeElement('div', 'not-found', '❌ Arşiv bulunamadı')); autoScroll('waybackResults'); } catch(e) { showError('waybackResults', e.message); } }
+        async function searchCRTSubdomains() { const domain = document.getElementById('subdomain').value.trim(); if (!domain) return alert('Domain girin'); setLoading('subdomainResults'); try { const result = await window.api.getCRTSubdomains(domain); const div = document.getElementById('subdomainResults'); div.innerHTML = ''; if (result.error && result.total === 0) div.appendChild(createSafeElement('div', 'not-found', '❌ Alt alan bulunamadı')); else if (result.total > 0) { div.appendChild(createSafeElement('div', 'found', `🗂️ Toplam ${result.total} alt alan bulundu (ilk 50 gösteriliyor)`)); for (const sub of result.subdomains) div.appendChild(createSafeElement('div', 'found', `🔹 ${sub}`)); } else div.appendChild(createSafeElement('div', 'not-found', '❌ Alt alan bulunamadı')); autoScroll('subdomainResults'); } catch(e) { showError('subdomainResults', e.message); } }
+
+        async function generateFakeUser() { setLoading('fakeUserResults'); try { const user = await window.api.generateFakeUser(); const div = document.getElementById('fakeUserResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `🎭 ${user.fullName}\n👤 @${user.username}\n📧 ${user.email}\n📞 ${user.phone}\n🏙️ ${user.city}`)); autoScroll('fakeUserResults'); } catch(e) { showError('fakeUserResults', e.message); } }
+        async function getDNSHistory() { const domain = document.getElementById('dnsHistoryDomain').value.trim(); if (!domain) return alert('Domain girin'); setLoading('dnsHistoryResults'); try { const result = await window.api.getDNSHistory(domain); const div = document.getElementById('dnsHistoryResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `📜 ${result.domain}\n🖥️ IP: ${result.current_ip}\n📧 MX: ${(result.mx || []).join(', ') || 'Yok'}\n🔧 NS: ${(result.ns || []).join(', ') || 'Yok'}`)); else div.appendChild(createSafeElement('div', 'not-found', '❌ DNS kaydı alınamadı')); autoScroll('dnsHistoryResults'); } catch(e) { showError('dnsHistoryResults', e.message); } }
+        async function scanPorts() { const ip = document.getElementById('scanIp').value.trim(); if (!ip) return alert('IP girin'); setLoading('portResults', '🔄 15 port taranıyor...'); try { const result = await window.api.scanPorts(ip); const div = document.getElementById('portResults'); div.innerHTML = ''; if (result.error) div.appendChild(createSafeElement('div', 'warning', `⚠️ ${result.error}`)); else if (result.totalOpen > 0) div.appendChild(createSafeElement('div', 'not-found', `🔌 ${result.ip} — ${result.totalOpen} açık port:\n${result.openPorts.map(p => `${p.port} (${p.name})`).join('\n')}`)); else div.appendChild(createSafeElement('div', 'found', `✅ ${result.ip} — Açık port bulunamadı`)); autoScroll('portResults'); } catch(e) { showError('portResults', e.message); } }
+        async function getIPFromDomain() { const domain = document.getElementById('domainToIp').value.trim(); if (!domain) return alert('Domain girin'); setLoading('domainToIpResults'); try { const result = await window.api.getIPFromDomain(domain); const div = document.getElementById('domainToIpResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `🌐 ${result.domain} → 🖥️ ${result.ip}`)); else div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`)); autoScroll('domainToIpResults'); } catch(e) { showError('domainToIpResults', e.message); } }
+        async function saveReport() { const filename = document.getElementById('reportName').value.trim(); const data = document.getElementById('reportData').value.trim(); if (!filename || !data) return alert('Dosya adı ve veri girin'); setLoading('reportResults'); try { let jsonData; try { jsonData = JSON.parse(data); } catch(e) { jsonData = { text: data }; } const result = await window.api.saveReport(jsonData, filename); const div = document.getElementById('reportResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `✅ Rapor kaydedildi:\n${result.path}`)); else div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`)); autoScroll('reportResults'); } catch(e) { showError('reportResults', e.message); } }
+        async function generateCorrelationReport() { setLoading('correlationResults'); try { const report = await window.api.getCorrelationReport(); const div = document.getElementById('correlationResults'); div.innerHTML = ''; const riskClass = report.summary.riskScore >= 80 ? 'not-found' : (report.summary.riskScore >= 50 ? 'warning' : 'found'); div.appendChild(createSafeElement('div', riskClass, `📊 Risk Skoru: ${report.summary.riskScore}%\n⚠️ Risk Seviyesi: ${report.summary.riskLevel}\n📌 Toplam Bulgu: ${report.summary.totalFindings}\n🔗 Korelasyon: ${report.summary.correlationsFound}`)); for (const c of report.correlations) div.appendChild(createSafeElement('div', 'warning', `🔗 ${c.type} (Güven: %${c.confidence})\n💡 ${c.reason}`)); const all = [...report.findings.usernames.map(v=>`👤 ${v}`), ...report.findings.emails.map(v=>`📧 ${v}`), ...report.findings.phones.map(v=>`📞 ${v}`), ...report.findings.domains.map(v=>`🌐 ${v}`), ...report.findings.ips.map(v=>`🖥️ ${v}`)]; if (all.length) div.appendChild(createSafeElement('div', 'found', `📋 Toplanan Veriler:\n${all.join('\n')}`)); autoScroll('correlationResults'); } catch(e) { showError('correlationResults', e.message); } }
+        async function loadHistory() { setLoading('historyResults'); try { const hist = await window.api.getHistory(); const div = document.getElementById('historyResults'); div.innerHTML = ''; if (!hist.length) { div.appendChild(createSafeElement('div', 'result-item', '📭 Kayıtlı arama yok')); return; } for (const h of hist.slice(0, 50)) { const ts = h.timestamp ? h.timestamp.substring(0, 19).replace('T', ' ') : '?'; div.appendChild(createSafeElement('div', 'history-item', `📌 ${ts} | ${h.type}: ${h.query} → ${h.result}`)); } autoScroll('historyResults'); } catch(e) { showError('historyResults', e.message); } }
+        async function clearHistory() { if(confirm('Geçmiş silinecek. Emin misiniz?')) await window.api.clearHistory(); loadHistory(); }
+
+        async function loadGraph() { setLoading('graphInfo', '🔄 Bağlantı grafiği oluşturuluyor...'); try { const graphData = await window.api.getGraphData(); const container = document.getElementById('graphContainer'); container.innerHTML = ''; const cy = cytoscape({ container, elements: [...graphData.nodes, ...graphData.edges], style: [{ selector: 'node', style: { 'background-color': '#00ff88', 'label': 'data(label)', 'color': '#fff', 'font-size': '10px', 'width': '40px', 'height': '40px', 'text-valign': 'center', 'text-halign': 'center' } }, { selector: 'node[type="email"]', style: { 'background-color': '#ffaa00' } }, { selector: 'node[type="ip"]', style: { 'background-color': '#ff4444' } }, { selector: 'edge', style: { 'width': 2, 'line-color': '#00aaff', 'target-arrow-color': '#00aaff', 'target-arrow-shape': 'triangle', 'label': 'data(label)', 'font-size': '8px', 'color': '#aaa' } }], layout: { name: 'cose', idealEdgeLength: 100, padding: 30 } }); document.getElementById('graphInfo').innerHTML = `<div class="found">✅ ${graphData.nodes.length} düğüm, ${graphData.edges.length} bağlantı gösteriliyor.</div>`; } catch(e) { document.getElementById('graphInfo').innerHTML = `<div class="warning">❌ Grafik yüklenemedi: ${e.message}</div>`; } }
+
+        async function loadRiskDashboard() { setLoading('dashboardResults', '🔄 Risk verileri toplanıyor...'); try { const dash = await window.api.getRiskDashboard(); const div = document.getElementById('dashboardResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'result-item found', `⚠️ Risk Skoru: ${dash.riskScore} / 100 (${dash.riskLevel})`)); div.appendChild(createSafeElement('div', 'result-item', `📌 Toplam Bulgu: ${dash.totalFindings} | 🔗 Yüksek:${dash.riskCategories.high} | Orta:${dash.riskCategories.medium} | Düşük:${dash.riskCategories.low}`)); if (dash.activeThreats.length) div.appendChild(createSafeElement('div', 'warning', `🔥 Aktif Tehditler: ${dash.activeThreats.join(', ')}`)); if (dash.topFindings.usernames.length) div.appendChild(createSafeElement('div', 'found', `👤 En çok taranan kullanıcılar: ${dash.topFindings.usernames.join(', ')}`)); if (dash.topFindings.emails.length) div.appendChild(createSafeElement('div', 'found', `📧 En çok taranan e-postalar: ${dash.topFindings.emails.join(', ')}`)); autoScroll('dashboardResults'); } catch(e) { showError('dashboardResults', e.message); } }
+
+        async function setProxy() {
+            const type = document.getElementById('proxyType').value;
+            const url = document.getElementById('proxyUrl').value.trim();
+            const div = document.getElementById('proxyResults');
+            div.innerHTML = '';
+            if (type === 'none' || !url) {
+                await window.api.clearProxy();
+                div.appendChild(createSafeElement('div', 'found', '✅ Proxy kapatıldı.'));
+                return;
+            }
+            let proxyUrl = type === 'socks5' ? `socks5://${url}` : `http://${url}`;
+            const result = await window.api.setProxy(proxyUrl);
+            // [DÜZELTİLDİ #4] — Proxy hata mesajını göster
+            if (result.success) {
+                div.appendChild(createSafeElement('div', 'found', `✅ Proxy aktif: ${proxyUrl}\nTüm istekler proxy üzerinden geçecek.`));
+            } else {
+                div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`));
+            }
+        }
+
+        async function clearProxy() { await window.api.clearProxy(); const div = document.getElementById('proxyResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', '✅ Proxy kapatıldı.')); }
+
+        async function runBatchQuery() { const type = document.getElementById('batchType').value; const raw = document.getElementById('batchData').value; if (!raw.trim()) return alert('Değer girin'); const items = raw.split('\n').map(l => l.trim()).filter(l => l); setLoading('batchResults', `🔄 ${items.length} öğe işleniyor...`); try { let results; if (type === 'username') results = await window.api.batchUsername(items); else results = await window.api.batchDomain(items); const div = document.getElementById('batchResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `📊 ${results.length} sorgu tamamlandı.`)); for (const r of results) { if (type === 'username') div.appendChild(createSafeElement('div', r.foundCount > 0 ? 'found' : 'not-found', `${r.username} → ${r.foundCount} platformda bulundu`)); else div.appendChild(createSafeElement('div', r.ip !== 'Bulunamadı' ? 'found' : 'not-found', `${r.domain} → ${r.ip}`)); } autoScroll('batchResults'); } catch(e) { showError('batchResults', e.message); } }
+
+        async function setBatchConcurrency() {
+            const newVal = parseInt(document.getElementById('batchConcurrency').value);
+            if (isNaN(newVal)) return alert('Geçerli bir sayı girin!');
+            const result = await window.api.setBatchConcurrency(newVal);
+            if (result.success) alert(`Batch eşzamanlılık ${result.concurrency} olarak ayarlandı.`);
+            else alert(`Hata: ${result.error}`);
+        }
+
+        async function saveForensic() { const caseName = document.getElementById('caseName').value; const data = document.getElementById('forensicData').value; if (!caseName || !data) return alert('Dosya no ve veri girin'); try { const result = await window.api.saveForensicReport(JSON.parse(data), caseName); const div = document.getElementById('forensicResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `✅ ${result.path}\n🔑 Hash: ${result.hash}\n🆔 Report ID: ${result.reportId}`)); else div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`)); autoScroll('forensicResults'); } catch(e) { showError('forensicResults', 'JSON geçersiz veya kaydetme hatası'); } }
+        async function checkTyposquatting() { const domain = document.getElementById('typoDomain').value; if (!domain) return alert('Domain girin'); setLoading('typoResults'); try { const result = await window.api.checkTyposquatting(domain); const div = document.getElementById('typoResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `📊 ${result.totalActive} aktif sahte domain tespit edildi`)); for (const d of result.typosquattingDomains) div.appendChild(createSafeElement('div', d.active ? 'not-found' : 'found', `${d.domain} — ${d.risk}`)); autoScroll('typoResults'); } catch(e) { showError('typoResults', e.message); } }
+        async function checkEmployeeLeaks() { const domain = document.getElementById('companyDomain').value; if (!domain) return alert('Domain girin'); setLoading('leakResults'); try { const result = await window.api.checkEmployeeLeaks(domain); const div = document.getElementById('leakResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `📧 ${result.totalLeaked} sızdırılmış e-posta`)); for (const l of result.leakedEmails) div.appendChild(createSafeElement('div', 'not-found', `${l.email} — Kaynak: ${l.sources.join(', ')}`)); autoScroll('leakResults'); } catch(e) { showError('leakResults', e.message); } }
+        async function vipProtectionScan() { const name = document.getElementById('vipName').value; const email = document.getElementById('vipEmail').value; if (!name && !email) return alert('İsim veya email girin'); setLoading('vipResults'); try { const result = await window.api.vipProtectionScan(name, email); const div = document.getElementById('vipResults'); div.innerHTML = ''; const riskClass = result.riskScore > 50 ? 'not-found' : 'found'; div.appendChild(createSafeElement('div', `result-item ${riskClass}`, `🎯 Risk Skoru: ${result.riskScore}% (${result.riskLevel})`)); for (const f of result.findings) div.appendChild(createSafeElement('div', 'warning', `${f.type}: ${f.value} — ${f.breached ? 'İhlal var' : 'Güvenli'}`)); const recDiv = createSafeElement('div', 'found', `💡 Öneriler:\n${result.recommendations.map(r => `- ${r}`).join('\n')}`); div.appendChild(recDiv); autoScroll('vipResults'); } catch(e) { showError('vipResults', e.message); } }
+        async function showEULA() { setLoading('eulaResults'); try { const eula = await window.api.getEULA(); const div = document.getElementById('eulaResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `${eula.title}\nVersiyon: ${eula.version}\nSon Güncelleme: ${eula.lastUpdated}\n\n${eula.clauses.map(c => `• ${c}`).join('\n')}`)); autoScroll('eulaResults'); } catch(e) { showError('eulaResults', e.message); } }
+
+        // [DÜZELTİLDİ #7] — innerHTML yerine createSafeElement kullanıldı
+        async function analyzeUploadedImage() {
+            const fileInput = document.getElementById('imageInput');
+            if (!fileInput.files || fileInput.files.length === 0) return alert('Bir resim dosyası seçin!');
+            const file = fileInput.files[0];
+            const filePath = file.path;
+            if (!filePath) return alert('Dosya yolu alınamadı. Lütfen dosyayı masaüstü gibi bir yerden seçin.');
+
+            setLoading('metadataResults', '🔄 EXIF verileri okunuyor...');
+            try {
+                const result = await window.api.analyzeMetadata(filePath);
+                const div = document.getElementById('metadataResults');
+                div.innerHTML = '';
+                if (result.success) {
+                    const info = [
+                        `📷 Kamera: ${result.make || '?'} ${result.model || '?'}`,
+                        `📅 Tarih: ${result.datetime || '?'}`,
+                        `🖥️ Yazılım: ${result.software || '?'}`,
+                        `📍 GPS: ${result.gps ? `${result.gps.lat}, ${result.gps.lon}` : 'Bulunamadı'}`
+                    ].join('\n');
+                    div.appendChild(createSafeElement('div', 'result-item found', info));
+                } else {
+                    div.appendChild(createSafeElement('div', 'warning', `❌ EXIF okunamadı: ${result.error}`));
+                }
+                autoScroll('metadataResults');
+            } catch (err) {
+                showError('metadataResults', err.message);
+            }
+        }
+
+        async function saveHtmlReport() {
+            const dataStr = document.getElementById('htmlReportData').value.trim();
+            if (!dataStr) return alert('JSON verisi girin!');
+            try {
+                const data = JSON.parse(dataStr);
+                const htmlContent = await window.api.generateHtmlReport(data);
+                const blob = new Blob([htmlContent], {type: 'text/html'});
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `osinthub_report_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.html`;
+                link.click();
+                URL.revokeObjectURL(link.href);
+                const div = document.getElementById('htmlReportResults');
+                div.innerHTML = '';
+                div.appendChild(createSafeElement('div', 'found', '✅ HTML raporu kaydedildi.'));
+            } catch (e) {
+                showError('htmlReportResults', 'Geçersiz JSON formatı');
+            }
+        }
+
+        // Otomatik scroll
+        function enableAutoScrollForAll() {
+            const resultDivs = document.querySelectorAll('.results');
+            resultDivs.forEach(div => {
+                if (!div.hasAttribute('data-scroll-enabled')) {
+                    div.setAttribute('data-scroll-enabled', 'true');
+                    const observer = new MutationObserver(() => { div.scrollTop = div.scrollHeight; });
+                    observer.observe(div, { childList: true, subtree: true });
+                }
+            });
+        }
+        setInterval(enableAutoScrollForAll, 1000);
+        enableAutoScrollForAll();
+    </script>
+</body>
+</html>
