@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
@@ -35,51 +35,79 @@ const CONFIG = {
     API_KEYS: {
         IPINFO: process.env.IPINFO_TOKEN || '',
         LEAKCHECK: process.env.LEAKCHECK_API_KEY || ''
-    }
+    },
+    VERSION: '2.1.0',
+    UPDATE_URL: 'https://raw.githubusercontent.com/emirbugra69/OsintHub/main/version.json'
 };
 
-// ============ GLOBAL TIMEOUT ============
-axios.defaults.timeout = CONFIG.GLOBAL_TIMEOUT;
+if (!process.env.IPINFO_TOKEN) {
+    console.warn('⚠️ IPINFO_TOKEN .env dosyasında bulunamadı, detaylı IP lokasyonu sınırlı çalışabilir.');
+}
+if (!process.env.LEAKCHECK_API_KEY) {
+    console.warn('⚠️ LEAKCHECK_API_KEY .env dosyasında bulunamadı, email breach kontrolü çalışmayabilir.');
+}
 
-// ============ PROXY ============
+// ============ PROXY DÜZELTİLDİ ============
 let activeProxy = null;
+let mainWindow = null;
+let tray = null;
 
-// [DÜZELTİLDİ #4] — Proxy URL format doğrulaması eklendi
+// FIX: Dinamik axios instance oluşturma
+let axiosInstance = axios.create({
+    timeout: CONFIG.GLOBAL_TIMEOUT,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+});
+
+function createAxiosInstance() {
+    const config = {
+        timeout: CONFIG.GLOBAL_TIMEOUT,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    };
+    if (activeProxy) {
+        if (activeProxy.startsWith('socks')) {
+            config.httpsAgent = new SocksProxyAgent(activeProxy);
+            config.httpAgent = new SocksProxyAgent(activeProxy);
+        } else {
+            config.httpAgent = new HttpProxyAgent(activeProxy);
+            config.httpsAgent = new HttpsProxyAgent(activeProxy);
+        }
+    }
+    axiosInstance = axios.create(config);
+}
+
 function setProxy(proxyUrl) {
     const validProxy = /^(socks5?|https?):\/\/.+:\d+$/.test(proxyUrl);
     if (!validProxy) return { success: false, error: 'Geçersiz proxy formatı. Örnek: socks5://127.0.0.1:9050' };
     activeProxy = proxyUrl;
+    createAxiosInstance(); // FIX: yeni instance oluştur
     return { success: true, proxy: proxyUrl };
 }
 
-function getProxyConfig() {
-    if (!activeProxy) return {};
-    if (activeProxy.startsWith('socks')) {
-        const agent = new SocksProxyAgent(activeProxy);
-        return { httpsAgent: agent, httpAgent: agent };
-    } else {
-        return {
-            httpAgent: new HttpProxyAgent(activeProxy),
-            httpsAgent: new HttpsProxyAgent(activeProxy)
-        };
-    }
+function clearProxy() {
+    activeProxy = null;
+    createAxiosInstance();
+    return { success: true };
 }
-
-const defaultAxios = axios.create({
-    timeout: 12000,
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-});
 
 async function proxyGet(url, extraConfig = {}) {
-    return defaultAxios.get(url, { ...getProxyConfig(), ...extraConfig });
+    return axiosInstance.get(url, extraConfig);
 }
 
-// ============ HISTORY ============
+// ============ HISTORY (ASYNC YAZMA) ============
 const historyPath = path.join(app.getPath('userData'), 'history.json');
 let history = [];
 function loadHistoryFromDisk() { try { if (fs.existsSync(historyPath)) history = JSON.parse(fs.readFileSync(historyPath, 'utf8')); } catch(e) {} }
-function saveHistoryToDisk() { try { fs.writeFileSync(historyPath, JSON.stringify(history.slice(-100), null, 2)); } catch(e) {} }
-function addToHistoryInternal(entry) { entry.timestamp = new Date().toISOString(); history.unshift(entry); if (history.length > 100) history.pop(); saveHistoryToDisk(); }
+async function saveHistoryToDisk() { 
+    try { 
+        await fs.promises.writeFile(historyPath, JSON.stringify(history.slice(-100), null, 2)); 
+    } catch(e) {} 
+}
+function addToHistoryInternal(entry) { 
+    entry.timestamp = new Date().toISOString(); 
+    history.unshift(entry); 
+    if (history.length > 100) history.pop(); 
+    saveHistoryToDisk(); 
+}
 
 // ============ RATE LIMIT ============
 const rateLimitMap = new Map();
@@ -94,9 +122,19 @@ function checkRateLimit(key, maxCalls = CONFIG.RATE_LIMIT_MAX_CALLS, windowMs = 
 }
 function sanitizeInput(input) { if (typeof input !== 'string') return ''; return input.trim().substring(0, 200); }
 
-// ============ BATCH CONCURRENCY AYARI ============
+// ============ BATCH CONCURRENCY (FIX) ============
 let currentConcurrency = CONFIG.BATCH_CONCURRENCY;
 let batchQueue = new PQueue({ concurrency: currentConcurrency, interval: 1000, intervalCap: currentConcurrency });
+
+// FIX: concurrency değişince queue'yu yeniden oluşturma, sadece property'yi değiştir
+async function setBatchConcurrency(newConcurrency) {
+    if (newConcurrency >= 1 && newConcurrency <= 10) {
+        currentConcurrency = newConcurrency;
+        batchQueue.concurrency = currentConcurrency; // P-queue property
+        return { success: true, concurrency: currentConcurrency };
+    }
+    return { success: false, error: 'Concurrency 1-10 arasında olmalıdır.' };
+}
 
 // ============ GELİŞMİŞ FORENSIC RAPOR ============
 function calculateConfidence(finding) {
@@ -186,12 +224,11 @@ async function saveForensicReport(data, caseName) {
         const safeName = caseName.replace(/[^a-zA-Z0-9_\-]/g, '_');
         const filename = `forensic_${safeName}_${timestamp}.json`;
 
-        // [DÜZELTİLDİ #3] — Path traversal koruması
         const filePath = path.resolve(desktop, filename);
         if (!filePath.startsWith(path.resolve(desktop))) return { success: false, error: 'Geçersiz dosya yolu' };
 
         const forensicData = generateForensicReport(Array.isArray(data) ? data : [data], caseName);
-        fs.writeFileSync(filePath, JSON.stringify(forensicData, null, 2));
+        await fs.promises.writeFile(filePath, JSON.stringify(forensicData, null, 2));
         return { success: true, path: filePath, hash: forensicData.chainOfCustody.hash, reportId: forensicData.reportId };
     } catch (e) {
         return { success: false, error: e.message };
@@ -204,7 +241,6 @@ async function generatePDFReport(data, filename) {
         if (!fs.existsSync(desktop)) throw new Error('Masaüstü bulunamadı');
         const safeFilename = filename.replace(/[^a-zA-Z0-9_\-]/g, '_');
 
-        // [DÜZELTİLDİ #3] — Path traversal koruması
         const filePath = path.resolve(desktop, `${safeFilename}.pdf`);
         if (!filePath.startsWith(path.resolve(desktop))) return { success: false, error: 'Geçersiz dosya yolu' };
 
@@ -227,15 +263,13 @@ async function generatePDFReport(data, filename) {
     }
 }
 
-// ============ HTML RAPOR OLUŞTURMA ============
-// [DÜZELTİLDİ #1] — XSS koruması: veri HTML encode edilerek yerleştiriliyor
 function escapeHtml(str) {
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+        .replace(/'/g, '&#39;');
 }
 
 function generateHTMLReport(data) {
@@ -259,8 +293,15 @@ function generateHTMLReport(data) {
     </html>`;
 }
 
-// ============ KURUMSAL MODÜLLER ============
+// ============ KURUMSAL MODÜLLER (SSRF FIX) ============
+// FIX: Domain validasyonu
+function isValidDomain(domain) {
+    const domainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i;
+    return domainRegex.test(domain);
+}
+
 async function checkTyposquatting(domain) {
+    if (!isValidDomain(domain)) return { originalDomain: domain, typosquattingDomains: [], totalActive: 0, error: 'Geçersiz domain formatı' };
     const base = domain.replace(/\.[^.]+$/, '');
     const tld = domain.includes('.') ? domain.split('.').pop() : 'com';
     const typos = [
@@ -286,7 +327,7 @@ async function checkTyposquatting(domain) {
 }
 
 async function checkEmployeeLeaks(domain) {
-    // [İYİLEŞTİRME #9] — Genişletilmiş e-posta listesi
+    if (!isValidDomain(domain)) return { domain, totalLeaked: 0, leakedEmails: [], error: 'Geçersiz domain' };
     const commonEmails = ['admin', 'info', 'support', 'sales', 'contact', 'ceo', 'hr', 'it', 'cto', 'billing', 'noreply', 'security', 'abuse', 'webmaster'];
     const leaked = [];
     for (const email of commonEmails) {
@@ -341,12 +382,9 @@ class CorrelationEngine {
         if (!exists) this.data[key].push({ value, source, timestamp: Date.now() });
         this.analyzeCorrelations();
     }
-    // [DÜZELTİLDİ #6] — Duplicate korelasyon önleme: Set ile tekrar kontrolü
     analyzeCorrelations() {
         this.correlations = [];
         const seen = new Set();
-
-        // Username-Email
         for (const u of this.data.usernames) for (const e of this.data.emails) {
             if (u.value.toLowerCase() === e.value.split('@')[0].toLowerCase()) {
                 const key = `username-email:${u.value}:${e.value}`;
@@ -356,7 +394,6 @@ class CorrelationEngine {
                 }
             }
         }
-        // Email-Telefon
         for (const e of this.data.emails) for (const p of this.data.phones) {
             if (e.source === p.source) {
                 const key = `email-phone:${e.value}:${p.value}`;
@@ -366,7 +403,6 @@ class CorrelationEngine {
                 }
             }
         }
-        // Domain-IP
         for (const d of this.data.domains) for (const i of this.data.ips) {
             if (d.source === 'dns' && i.source === 'dns') {
                 const key = `domain-ip:${d.value}:${i.value}`;
@@ -423,30 +459,43 @@ function getRiskDashboard() {
     return { riskScore: r.summary.riskScore, riskLevel: r.summary.riskLevel, riskCategories: cats, activeThreats: threats, totalFindings: r.summary.totalFindings, recentActivity: history.length, topFindings: { usernames: r.findings.usernames.slice(0, 5), emails: r.findings.emails.slice(0, 5) } };
 }
 
-// ============ BATCH SORGU ============
+// ============ BATCH SORGU (HATA YÖNETİMİ FIX) ============
 async function batchUsernameSearch(usernames) {
     const results = [];
     const promises = usernames.filter(u => u.trim()).map(async (u) => batchQueue.add(async () => {
-        const r = await checkUsername(u.trim());
-        return { username: u.trim(), foundCount: r.foundCount, platforms: r.results.filter(x => x.exists).map(x => x.platform) };
+        try {
+            const r = await checkUsername(u.trim());
+            return { username: u.trim(), foundCount: r.foundCount, platforms: r.results.filter(x => x.exists).map(x => x.platform) };
+        } catch (err) {
+            return { username: u.trim(), error: err.message };
+        }
     }));
     const settled = await Promise.allSettled(promises);
-    for (const p of settled) if (p.status === 'fulfilled') results.push(p.value);
+    for (const p of settled) {
+        if (p.status === 'fulfilled') results.push(p.value);
+        else results.push({ error: p.reason?.message || 'Unknown error' });
+    }
     return results;
 }
 async function batchDomainSearch(domains) {
     const results = [];
     const promises = domains.filter(d => d.trim()).map(async (d) => batchQueue.add(async () => {
-        const r = await checkDomain(d.trim());
-        return { domain: d.trim(), ip: r.results.ip };
+        try {
+            const r = await checkDomain(d.trim());
+            return { domain: d.trim(), ip: r.results.ip };
+        } catch (err) {
+            return { domain: d.trim(), error: err.message };
+        }
     }));
     const settled = await Promise.allSettled(promises);
-    for (const p of settled) if (p.status === 'fulfilled') results.push(p.value);
+    for (const p of settled) {
+        if (p.status === 'fulfilled') results.push(p.value);
+        else results.push({ error: p.reason?.message || 'Unknown error' });
+    }
     return results;
 }
 
 // ============ USERNAME ============
-// [İYİLEŞTİRME #5] — Platform bazlı "not found" pattern'leri genişletildi
 async function checkUsername(username) {
     const platforms = {
         'GitHub':    { url: `https://github.com/${username}`,             notFound: ['not found', '404', 'page not found'] },
@@ -496,27 +545,10 @@ async function checkEmail(email) {
     return { email, breached: false, message: 'İhlal bulunamadı' };
 }
 
-// [DÜZELTİLDİ #2] — Path traversal koruması: sadece izin verilen resim uzantıları
-async function analyzeImageMetadata(filePath) {
+// FIX: Buffer ile EXIF analizi (path yerine)
+async function analyzeImageMetadataFromBuffer(buffer) {
     try {
-        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
-        const ext = path.extname(filePath).toLowerCase();
-        if (!allowedExtensions.includes(ext)) {
-            return { success: false, error: 'Geçersiz dosya türü. Sadece JPG, PNG, TIFF desteklenir.' };
-        }
-
-        // Mutlak yol kontrolü — path traversal engelle
-        const resolvedPath = path.resolve(filePath);
-        if (!resolvedPath || resolvedPath.includes('..')) {
-            return { success: false, error: 'Geçersiz dosya yolu.' };
-        }
-
-        if (!fs.existsSync(resolvedPath)) {
-            return { success: false, error: 'Dosya bulunamadı.' };
-        }
-
-        const b = fs.readFileSync(resolvedPath);
-        const parsed = ExifParser.create(b).parse();
+        const parsed = ExifParser.create(buffer).parse();
         const e = parsed.tags || {};
         return {
             success: true,
@@ -526,6 +558,29 @@ async function analyzeImageMetadata(filePath) {
             gps: e.GPSLatitude ? { lat: e.GPSLatitude, lon: e.GPSLongitude } : null,
             software: e.Software
         };
+    } catch(e) { return { success: false, error: e.message }; }
+}
+
+// Eski path'li fonksiyonu da güvenli hale getirelim (opsiyonel)
+async function analyzeImageMetadataFromPath(filePath) {
+    try {
+        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+        const ext = path.extname(filePath).toLowerCase();
+        if (!allowedExtensions.includes(ext)) {
+            return { success: false, error: 'Geçersiz dosya türü. Sadece JPG, PNG, TIFF desteklenir.' };
+        }
+        const resolvedPath = path.resolve(filePath);
+        // FIX: Sadece Masaüstü ve Downloads gibi güvenli klasörlere izin ver
+        const desktop = path.join(require('os').homedir(), 'Desktop');
+        const downloads = path.join(require('os').homedir(), 'Downloads');
+        if (!resolvedPath.startsWith(desktop) && !resolvedPath.startsWith(downloads)) {
+            return { success: false, error: 'Dosya yolu güvenli değil. Sadece Masaüstü ve Downloads klasörlerine izin verilir.' };
+        }
+        if (!fs.existsSync(resolvedPath)) {
+            return { success: false, error: 'Dosya bulunamadı.' };
+        }
+        const b = fs.readFileSync(resolvedPath);
+        return analyzeImageMetadataFromBuffer(b);
     } catch(e) { return { success: false, error: e.message }; }
 }
 
@@ -566,8 +621,18 @@ async function checkWayback(domain) {
 async function getCRTSubdomains(domain) {
     try {
         const r = await proxyGet(`https://crt.sh/?q=%.${domain}&output=json`, { timeout: 20000 });
-        if (Array.isArray(r.data)) {
-            const subs = [...new Set(r.data.map(i => i.name_value).filter(Boolean).flatMap(v => v.split('\n')).map(v => v.trim().replace(/^\*\./, '')).filter(v => v.endsWith(domain)))].sort();
+        // FIX: Eğer dizi değilse veya hatalıysa boş dizi döndür
+        let data = r.data;
+        if (!Array.isArray(data)) {
+            // JSON parse hatası olabilir, güvenli şekilde kontrol et
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch(e) { data = []; }
+            } else {
+                data = [];
+            }
+        }
+        if (Array.isArray(data)) {
+            const subs = [...new Set(data.map(i => i.name_value).filter(Boolean).flatMap(v => v.split('\n')).map(v => v.trim().replace(/^\*\./, '')).filter(v => v.endsWith(domain)))].sort();
             addToHistoryInternal({ type: 'CRT', query: domain, result: `${subs.length}` });
             return { domain, subdomains: subs.slice(0, 50), total: subs.length };
         }
@@ -649,7 +714,6 @@ async function getDNSHistory(domain) {
     return { success: true, domain, ...res };
 }
 
-// [İYİLEŞTİRME #8] — Sahte kullanıcı: genişletilmiş isim/şehir havuzu
 async function generateFakeUser() {
     const firstNames = ['Ali','Veli','Ayşe','Mehmet','Fatma','Hasan','Zeynep','Murat','Elif','Emre','Seda','Burak','Cansu','Tarık','Deniz'];
     const lastNames = ['Yılmaz','Demir','Kaya','Çelik','Şahin','Arslan','Doğan','Koç','Aydın','Özdemir'];
@@ -666,12 +730,9 @@ async function generateFakeUser() {
 async function saveReport(data, filename) {
     const desktop = path.join(require('os').homedir(), 'Desktop');
     const safe = filename.replace(/[^a-zA-Z0-9_\-]/g, '_');
-
-    // [DÜZELTİLDİ #3] — Path traversal koruması
     const fp = path.resolve(desktop, `${safe}.json`);
     if (!fp.startsWith(path.resolve(desktop))) return { success: false, error: 'Geçersiz dosya yolu' };
-
-    try { fs.writeFileSync(fp, JSON.stringify(data, null, 2)); return { success: true, path: fp }; }
+    try { await fs.promises.writeFile(fp, JSON.stringify(data, null, 2)); return { success: true, path: fp }; }
     catch(e) { return { success: false, error: e.message }; }
 }
 
@@ -685,13 +746,118 @@ function calculateScore(results) {
     return { score: s, level: s >= 80 ? 'Düşük Risk' : (s >= 50 ? 'Orta Risk' : 'Yüksek Risk'), risks: [] };
 }
 
-// ============ WINDOW ============
-function createWindow() {
-    const win = new BrowserWindow({
-        width: 1600, height: 1000,
-        webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
+// ============ YENİ ÖZELLİKLER ============
+function createTray() {
+    const iconPath = path.join(__dirname, 'icon.ico');
+    let trayIcon = null;
+    if (fs.existsSync(iconPath)) trayIcon = iconPath;
+    else trayIcon = path.join(__dirname, 'icon.ico');
+    tray = new Tray(trayIcon);
+    const contextMenu = Menu.buildFromTemplate([
+        { label: 'Göster', click: () => { if (mainWindow) mainWindow.show(); } },
+        { label: 'Gizle', click: () => { if (mainWindow) mainWindow.hide(); } },
+        { type: 'separator' },
+        { label: 'Çıkış', click: () => app.quit() }
+    ]);
+    tray.setToolTip('OsintHub');
+    tray.setContextMenu(contextMenu);
+    tray.on('click', () => {
+        if (mainWindow) mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
     });
-    win.loadFile('index.html');
+}
+
+async function checkForUpdates() {
+    try {
+        const response = await axios.get(CONFIG.UPDATE_URL, { timeout: 5000 });
+        const latest = response.data;
+        if (latest.version && latest.version !== CONFIG.VERSION) {
+            const result = await dialog.showMessageBox({
+                type: 'info',
+                title: 'Güncelleme Mevcut',
+                message: `Yeni sürüm ${latest.version} yayınlandı!`,
+                detail: `Şu anki sürüm: ${CONFIG.VERSION}\nYenilikler: ${latest.changelog || 'İyileştirmeler ve hata düzeltmeleri.'}`,
+                buttons: ['İndir', 'Daha Sonra'],
+                defaultId: 0,
+                cancelId: 1
+            });
+            if (result.response === 0 && latest.downloadUrl) {
+                const { shell } = require('electron');
+                shell.openExternal(latest.downloadUrl);
+            }
+        }
+    } catch (error) {
+        console.error('Güncelleme kontrolü başarısız:', error.message);
+        // FIX: Kullanıcıya hata bildir
+        dialog.showErrorBox('Güncelleme Hatası', 'Güncelleme kontrolü yapılamadı. İnternet bağlantınızı kontrol edin.');
+    }
+}
+
+function getProxyStatus() {
+    return { active: activeProxy !== null, proxyUrl: activeProxy };
+}
+
+let offlineMode = false;
+function setOfflineMode(mode) {
+    offlineMode = mode;
+    return offlineMode;
+}
+function isOffline() {
+    return offlineMode;
+}
+
+function getApiKeys() {
+    return {
+        ipinfo: CONFIG.API_KEYS.IPINFO,
+        leakcheck: CONFIG.API_KEYS.LEAKCHECK
+    };
+}
+function setApiKey(service, key) {
+    const envPath = path.join(__dirname, '.env');
+    let envContent = '';
+    try {
+        if (fs.existsSync(envPath)) envContent = fs.readFileSync(envPath, 'utf8');
+    } catch(e) {}
+    if (service === 'ipinfo') {
+        CONFIG.API_KEYS.IPINFO = key;
+        const regex = /^IPINFO_TOKEN=.*$/m;
+        if (regex.test(envContent)) envContent = envContent.replace(regex, `IPINFO_TOKEN=${key}`);
+        else envContent += `\nIPINFO_TOKEN=${key}`;
+    } else if (service === 'leakcheck') {
+        CONFIG.API_KEYS.LEAKCHECK = key;
+        const regex = /^LEAKCHECK_API_KEY=.*$/m;
+        if (regex.test(envContent)) envContent = envContent.replace(regex, `LEAKCHECK_API_KEY=${key}`);
+        else envContent += `\nLEAKCHECK_API_KEY=${key}`;
+    }
+    try { fs.writeFileSync(envPath, envContent.trim()); } catch(e) {}
+    return { success: true };
+}
+
+const logPath = path.join(app.getPath('userData'), 'error.log');
+function logError(error, context = '') {
+    const logEntry = `[${new Date().toISOString()}] ${context}: ${error.stack || error.message || error}\n`;
+    fs.appendFileSync(logPath, logEntry);
+    console.error(logEntry);
+}
+process.on('uncaughtException', (err) => logError(err, 'uncaughtException'));
+process.on('unhandledRejection', (reason) => logError(reason, 'unhandledRejection'));
+
+async function webSearch(query) {
+    const searchEngines = [
+        { name: 'Google', url: `https://www.google.com/search?q=${encodeURIComponent(query)}` },
+        { name: 'Bing', url: `https://www.bing.com/search?q=${encodeURIComponent(query)}` }
+    ];
+    const results = [];
+    for (const engine of searchEngines) {
+        try {
+            const response = await proxyGet(engine.url, { timeout: 10000 });
+            const links = response.data.match(/https?:\/\/[^\s"']+/g) || [];
+            const uniqueLinks = [...new Set(links.slice(0, 10))];
+            results.push({ engine: engine.name, links: uniqueLinks });
+        } catch(e) {
+            results.push({ engine: engine.name, error: e.message });
+        }
+    }
+    return results;
 }
 
 // ============ IPC HANDLER'LAR ============
@@ -711,37 +877,52 @@ ipcMain.handle('save-report', async (e, d, f) => saveReport(d, sanitizeInput(f))
 ipcMain.handle('calculate-score', async (e, r) => calculateScore(r));
 ipcMain.handle('get-crt-subdomains', async (e, d) => { if (!checkRateLimit('crt', 3, 15000)) return { subdomains: [], total: 0, error: 'Rate limit.' }; return getCRTSubdomains(sanitizeInput(d)); });
 ipcMain.handle('get-history', async () => history);
-ipcMain.handle('clear-history', async () => { history = []; saveHistoryToDisk(); return true; });
+ipcMain.handle('clear-history', async () => { history = []; await saveHistoryToDisk(); return true; });
 ipcMain.handle('add-to-history', async (e, entry) => { addToHistoryInternal(entry); return true; });
 ipcMain.handle('add-to-correlation', async (e, t, v, s) => { correlationEngine.addData(t, sanitizeInput(v), s); return correlationEngine.getOverallRisk(); });
 ipcMain.handle('get-correlation-report', async () => correlationEngine.generateReport());
 ipcMain.handle('set-proxy', async (e, url) => setProxy(url));
 ipcMain.handle('get-proxy', async () => ({ proxy: activeProxy }));
-ipcMain.handle('clear-proxy', async () => { activeProxy = null; return { success: true }; });
+ipcMain.handle('clear-proxy', async () => clearProxy());
 ipcMain.handle('batch-username', async (e, u) => { if (!checkRateLimit('batch', 2, 30000)) return []; return batchUsernameSearch(u); });
 ipcMain.handle('batch-domain', async (e, d) => { if (!checkRateLimit('batch', 2, 30000)) return []; return batchDomainSearch(d); });
 ipcMain.handle('get-graph-data', async () => getGraphData());
 ipcMain.handle('get-risk-dashboard', async () => getRiskDashboard());
-ipcMain.handle('analyze-metadata', async (e, p) => analyzeImageMetadata(p));
+ipcMain.handle('analyze-metadata', async (e, p) => analyzeImageMetadataFromPath(p));
+ipcMain.handle('analyze-metadata-buffer', async (e, buffer) => analyzeImageMetadataFromBuffer(Buffer.from(buffer)));
 ipcMain.handle('generate-pdf-report', async (e, d, n) => { if (!checkRateLimit('pdf', 3, 30000)) return { success: false, error: 'Rate limit.' }; return generatePDFReport(d, n); });
 ipcMain.handle('save-forensic-report', async (e, d, cn) => { if (!checkRateLimit('forensic', 3, 30000)) return { success: false, error: 'Rate limit.' }; return saveForensicReport(d, cn); });
 ipcMain.handle('check-typosquatting', async (e, d) => { if (!checkRateLimit('typo', 3, 20000)) return { typosquattingDomains: [], totalActive: 0, error: 'Rate limit.' }; return checkTyposquatting(d); });
 ipcMain.handle('check-employee-leaks', async (e, d) => { if (!checkRateLimit('leak', 3, 20000)) return { leakedEmails: [], totalLeaked: 0, error: 'Rate limit.' }; return checkEmployeeLeaks(d); });
 ipcMain.handle('vip-protection-scan', async (e, n, em) => { if (!checkRateLimit('vip', 3, 20000)) return { findings: [], riskScore: 0, error: 'Rate limit.' }; return vipProtectionScan(n, em); });
 ipcMain.handle('get-eula', async () => getEULA());
-ipcMain.handle('set-batch-concurrency', async (e, newConcurrency) => {
-    if (newConcurrency >= 1 && newConcurrency <= 10) {
-        currentConcurrency = newConcurrency;
-        batchQueue = new PQueue({ concurrency: currentConcurrency, interval: 1000, intervalCap: currentConcurrency });
-        return { success: true, concurrency: currentConcurrency };
-    }
-    return { success: false, error: 'Concurrency 1-10 arasında olmalıdır.' };
-});
-ipcMain.handle('generate-html-report', async (e, data) => {
-    return generateHTMLReport(data);
-});
+ipcMain.handle('set-batch-concurrency', async (e, newConcurrency) => setBatchConcurrency(newConcurrency));
+ipcMain.handle('generate-html-report', async (e, data) => generateHTMLReport(data));
 
-// [DÜZELTİLDİ #10] — app.whenReady hata yönetimi eklendi
+ipcMain.handle('get-proxy-status', async () => getProxyStatus());
+ipcMain.handle('set-offline-mode', async (e, mode) => setOfflineMode(mode));
+ipcMain.handle('is-offline', async () => isOffline());
+ipcMain.handle('get-api-keys', async () => getApiKeys());
+ipcMain.handle('set-api-key', async (e, service, key) => setApiKey(service, key));
+ipcMain.handle('get-error-log', async () => {
+    try { if (fs.existsSync(logPath)) return fs.readFileSync(logPath, 'utf8'); } catch(e) {}
+    return '';
+});
+ipcMain.handle('clear-error-log', async () => { try { fs.unlinkSync(logPath); } catch(e) {} return true; });
+ipcMain.handle('web-search', async (e, query) => webSearch(query));
+ipcMain.handle('check-updates', async () => checkForUpdates());
+
+// ============ WINDOW ============
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 1600, height: 1000,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
+    });
+    mainWindow.loadFile('index.html');
+    createTray();
+    setTimeout(() => checkForUpdates(), 5000);
+}
+
 app.whenReady().then(() => {
     loadHistoryFromDisk();
     createWindow();
