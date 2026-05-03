@@ -252,7 +252,7 @@
         function setLoading(divId, msg = '🔄 İşleniyor...') { document.getElementById(divId).innerHTML = `<div class="loading">${msg}</div>`; }
         function showError(divId, msg) { const div = document.getElementById(divId); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'warning', `❌ ${msg}`)); }
 
-        // ============ ANA FONKSİYONLAR ============
+        // ============ ESKİ TÜM FONKSİYONLAR AYNEN DURUYOR ============
         async function searchUsername() {
             const username = document.getElementById('username').value.trim();
             if (!username) return alert('Kullanıcı adı girin!');
@@ -327,7 +327,20 @@
 
         async function loadGraph() { setLoading('graphInfo', '🔄 Bağlantı grafiği oluşturuluyor...'); try { const graphData = await window.api.getGraphData(); const container = document.getElementById('graphContainer'); container.innerHTML = ''; const cy = cytoscape({ container, elements: [...graphData.nodes, ...graphData.edges], style: [{ selector: 'node', style: { 'background-color': '#00ff88', 'label': 'data(label)', 'color': '#fff', 'font-size': '10px', 'width': '40px', 'height': '40px', 'text-valign': 'center', 'text-halign': 'center' } }, { selector: 'node[type="email"]', style: { 'background-color': '#ffaa00' } }, { selector: 'node[type="ip"]', style: { 'background-color': '#ff4444' } }, { selector: 'edge', style: { 'width': 2, 'line-color': '#00aaff', 'target-arrow-color': '#00aaff', 'target-arrow-shape': 'triangle', 'label': 'data(label)', 'font-size': '8px', 'color': '#aaa' } }], layout: { name: 'cose', idealEdgeLength: 100, padding: 30 } }); document.getElementById('graphInfo').innerHTML = `<div class="found">✅ ${graphData.nodes.length} düğüm, ${graphData.edges.length} bağlantı gösteriliyor.</div>`; } catch(e) { document.getElementById('graphInfo').innerHTML = `<div class="warning">❌ Grafik yüklenemedi: ${e.message}</div>`; } }
 
-        async function loadRiskDashboard() { setLoading('dashboardResults', '🔄 Risk verileri toplanıyor...'); try { const dash = await window.api.getRiskDashboard(); const div = document.getElementById('dashboardResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'result-item found', `⚠️ Risk Skoru: ${dash.riskScore} / 100 (${dash.riskLevel})`)); div.appendChild(createSafeElement('div', 'result-item', `📌 Toplam Bulgu: ${dash.totalFindings} | 🔗 Yüksek:${dash.riskCategories.high} | Orta:${dash.riskCategories.medium} | Düşük:${dash.riskCategories.low}`)); if (dash.activeThreats.length) div.appendChild(createSafeElement('div', 'warning', `🔥 Aktif Tehditler: ${dash.activeThreats.join(', ')}`)); if (dash.topFindings.usernames.length) div.appendChild(createSafeElement('div', 'found', `👤 En çok taranan kullanıcılar: ${dash.topFindings.usernames.join(', ')}`)); if (dash.topFindings.emails.length) div.appendChild(createSafeElement('div', 'found', `📧 En çok taranan e-postalar: ${dash.topFindings.emails.join(', ')}`)); autoScroll('dashboardResults'); } catch(e) { showError('dashboardResults', e.message); } }
+        async function loadRiskDashboard() {
+            setLoading('dashboardResults', '🔄 Risk verileri toplanıyor...');
+            try {
+                const dash = await window.api.getRiskDashboard();
+                const div = document.getElementById('dashboardResults');
+                div.innerHTML = '';
+                div.appendChild(createSafeElement('div', 'result-item found', `⚠️ Risk Skoru: ${dash.riskScore} / 100 (${dash.riskLevel})`));
+                div.appendChild(createSafeElement('div', 'result-item', `📌 Toplam Bulgu: ${dash.totalFindings} | 🔗 Yüksek:${dash.riskCategories.high} | Orta:${dash.riskCategories.medium} | Düşük:${dash.riskCategories.low}`));
+                if (dash.activeThreats.length) div.appendChild(createSafeElement('div', 'warning', `🔥 Aktif Tehditler: ${dash.activeThreats.join(', ')}`));
+                if (dash.topFindings.usernames.length) div.appendChild(createSafeElement('div', 'found', `👤 En çok taranan kullanıcılar: ${dash.topFindings.usernames.join(', ')}`));
+                if (dash.topFindings.emails.length) div.appendChild(createSafeElement('div', 'found', `📧 En çok taranan e-postalar: ${dash.topFindings.emails.join(', ')}`));
+                autoScroll('dashboardResults');
+            } catch(e) { showError('dashboardResults', e.message); }
+        }
 
         async function setProxy() {
             const type = document.getElementById('proxyType').value;
@@ -340,12 +353,15 @@
                 return;
             }
             let proxyUrl = type === 'socks5' ? `socks5://${url}` : `http://${url}`;
-            const result = await window.api.setProxy(proxyUrl);
-            // [DÜZELTİLDİ #4] — Proxy hata mesajını göster
-            if (result.success) {
-                div.appendChild(createSafeElement('div', 'found', `✅ Proxy aktif: ${proxyUrl}\nTüm istekler proxy üzerinden geçecek.`));
-            } else {
-                div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`));
+            try {
+                const result = await window.api.setProxy(proxyUrl);
+                if (result.success) {
+                    div.appendChild(createSafeElement('div', 'found', `✅ Proxy aktif: ${proxyUrl}\nTüm istekler proxy üzerinden geçecek.`));
+                } else {
+                    div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`));
+                }
+            } catch (err) {
+                div.appendChild(createSafeElement('div', 'warning', `❌ Bağlantı hatası: ${err.message}`));
             }
         }
 
@@ -356,9 +372,13 @@
         async function setBatchConcurrency() {
             const newVal = parseInt(document.getElementById('batchConcurrency').value);
             if (isNaN(newVal)) return alert('Geçerli bir sayı girin!');
-            const result = await window.api.setBatchConcurrency(newVal);
-            if (result.success) alert(`Batch eşzamanlılık ${result.concurrency} olarak ayarlandı.`);
-            else alert(`Hata: ${result.error}`);
+            try {
+                const result = await window.api.setBatchConcurrency(newVal);
+                if (result.success) alert(`Batch eşzamanlılık ${result.concurrency} olarak ayarlandı.`);
+                else alert(`Hata: ${result.error}`);
+            } catch (err) {
+                alert(`Bağlantı hatası: ${err.message}`);
+            }
         }
 
         async function saveForensic() { const caseName = document.getElementById('caseName').value; const data = document.getElementById('forensicData').value; if (!caseName || !data) return alert('Dosya no ve veri girin'); try { const result = await window.api.saveForensicReport(JSON.parse(data), caseName); const div = document.getElementById('forensicResults'); div.innerHTML = ''; if (result.success) div.appendChild(createSafeElement('div', 'found', `✅ ${result.path}\n🔑 Hash: ${result.hash}\n🆔 Report ID: ${result.reportId}`)); else div.appendChild(createSafeElement('div', 'not-found', `❌ ${result.error}`)); autoScroll('forensicResults'); } catch(e) { showError('forensicResults', 'JSON geçersiz veya kaydetme hatası'); } }
@@ -367,17 +387,16 @@
         async function vipProtectionScan() { const name = document.getElementById('vipName').value; const email = document.getElementById('vipEmail').value; if (!name && !email) return alert('İsim veya email girin'); setLoading('vipResults'); try { const result = await window.api.vipProtectionScan(name, email); const div = document.getElementById('vipResults'); div.innerHTML = ''; const riskClass = result.riskScore > 50 ? 'not-found' : 'found'; div.appendChild(createSafeElement('div', `result-item ${riskClass}`, `🎯 Risk Skoru: ${result.riskScore}% (${result.riskLevel})`)); for (const f of result.findings) div.appendChild(createSafeElement('div', 'warning', `${f.type}: ${f.value} — ${f.breached ? 'İhlal var' : 'Güvenli'}`)); const recDiv = createSafeElement('div', 'found', `💡 Öneriler:\n${result.recommendations.map(r => `- ${r}`).join('\n')}`); div.appendChild(recDiv); autoScroll('vipResults'); } catch(e) { showError('vipResults', e.message); } }
         async function showEULA() { setLoading('eulaResults'); try { const eula = await window.api.getEULA(); const div = document.getElementById('eulaResults'); div.innerHTML = ''; div.appendChild(createSafeElement('div', 'found', `${eula.title}\nVersiyon: ${eula.version}\nSon Güncelleme: ${eula.lastUpdated}\n\n${eula.clauses.map(c => `• ${c}`).join('\n')}`)); autoScroll('eulaResults'); } catch(e) { showError('eulaResults', e.message); } }
 
-        // [DÜZELTİLDİ #7] — innerHTML yerine createSafeElement kullanıldı
+        // ============ FIX: EXIF ANALİZİ (Buffer ile) ============
         async function analyzeUploadedImage() {
             const fileInput = document.getElementById('imageInput');
             if (!fileInput.files || fileInput.files.length === 0) return alert('Bir resim dosyası seçin!');
             const file = fileInput.files[0];
-            const filePath = file.path;
-            if (!filePath) return alert('Dosya yolu alınamadı. Lütfen dosyayı masaüstü gibi bir yerden seçin.');
-
             setLoading('metadataResults', '🔄 EXIF verileri okunuyor...');
             try {
-                const result = await window.api.analyzeMetadata(filePath);
+                const arrayBuffer = await file.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                const result = await window.api.analyzeMetadataBuffer(uint8Array);
                 const div = document.getElementById('metadataResults');
                 div.innerHTML = '';
                 if (result.success) {
